@@ -41,8 +41,8 @@ class TradingClient:
 
             trading_pair = ''
             if user_command in ['1', '2', '3', '4']:  # commands that require a trading pair
-                trading_pair = input("Enter trading pair (btc/usdt or eth/usdt): ").lower()
-                if trading_pair not in ["btc/usdt", "eth/usdt"]:
+                trading_pair = input("Enter trading pair (BTCUSDT or ETHUSDT): ").upper()
+                if trading_pair not in ["BTCUSDT", "ETHUSDT"]:
                     print("Invalid trading pair. Try again.")
                     continue
 
@@ -76,12 +76,14 @@ class TradingClient:
         return fields
 
     def place_order(self, order_details):
-        # Split the order_details string by ';' to get individual key-value pairs,
-        # then split each pair by '=' to get a dictionary of fields.
-        fields = dict(item.split('=') for item in order_details.split(';'))
-        order_message = self.format_message("0", fields)  # Assuming msg_type "0" for new orders
-        print(f"Sending order: {order_message}")
-        self.order_publisher.send_string(order_message)
+        try:
+            fields = dict(item.split('=') for item in order_details.split(';') if '=' in item)
+            order_message = self.format_message("0", fields)  # Assuming msg_type "0" for new orders
+            print(f"Sending order: {order_message}")
+            self.order_publisher.send_string(order_message)
+        except ValueError as e:
+            print(f"Error: {e}. Please ensure that order details are formatted correctly.")
+
 
 
     def cancel_order(self, order_id):

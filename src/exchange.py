@@ -5,6 +5,8 @@ import math
 import zmq
 import time
 from typing import List, Union
+from tabulate import tabulate
+
 
 class bcolors:
     HEADER = '\033[95m'
@@ -43,7 +45,18 @@ class Order:
         return f"35={self.MsgType};49={self.SenderCompID};37={self.OrderID};38={self.OrderQty};" \
                f"40={self.OrdType};44={self.Price};52={self.SendingTime};54={self.Side};" \
                f"6404={self.POVTargetPercentage}"
-
+    def to_dict(self):
+        return {
+            'MsgType': self.MsgType,
+            'OrderID': self.OrderID,
+            'OrderQty': self.OrderQty,
+            'OrdType': self.OrdType,
+            'Price': self.Price,
+            'SenderCompID': self.SenderCompID,
+            'SendingTime': self.SendingTime,
+            'Side': self.Side,
+            'POVTargetPercentage': self.POVTargetPercentage,
+        }
 
 class Ack:
     def __init__(self, target_comp_id: str, msg_type: str, order_id: str, order_qty: float, price: float):
@@ -66,9 +79,9 @@ class Ack:
 def parse_quotes(market_data: str, instrument: str) -> List[Order]:
     res = []
     segments = market_data.split(';')
-    print(f"Segments: {segments}")  # Debugging statement to print segments
+    # print(f"Segments: {segments}")  # Debugging statement to print segments
     fields = {segment.split('=')[0]: segment.split('=')[1] for segment in segments if '=' in segment}
-    print(f"Fields: {fields}")  # Debugging statement to print fields
+    # print(f"Fields: {fields}")  # Debugging statement to print fields
     
     try:
         bid_price = float(fields.get('best_bid_price', 'NaN'))  # Using the correct key 'best_bid_price'
@@ -153,8 +166,8 @@ class BidAskQueue:
     def insert_bid(self, instrument, ord: Order):
         if instrument not in self.bid_queue:
             self.bid_queue[instrument] = deque()
-        self.bid_queue[instrument].appendleft(ord)
-        self.bid_queue.appendleft(ord)
+        self.bid_queue[instrument].append(ord)
+
 
     def record_trade(self, instrument, trade):
         if instrument not in self.executed_trades:
@@ -168,8 +181,8 @@ class BidAskQueue:
         bid_queue = self.bid_queue.get(instrument, deque())
         ask_queue = self.ask_queue.get(instrument, deque())
         return {
-            "bids": list(bid_queue),
-            "asks": list(ask_queue)
+            "bids": [order.to_dict() for order in bid_queue],
+            "asks": [order.to_dict() for order in ask_queue]
         }
 
     def print_order_book(self, instrument):
@@ -224,13 +237,30 @@ class BidAskQueue:
         return res
 
 
+    def format_order_book(self, order_book):
+        bid_table = tabulate(order_book['bids'], headers='keys', tablefmt='pretty')
+        ask_table = tabulate(order_book['asks'], headers='keys', tablefmt='pretty')
+
+        bid_lines = bid_table.split('\n')
+        ask_lines = ask_table.split('\n')
+
+        max_lines = max(len(bid_lines), len(ask_lines))
+
+        formatted_order_book = []
+        for i in range(max_lines):
+            bid_line = bid_lines[i] if i < len(bid_lines) else ''
+            ask_line = ask_lines[i] if i < len(ask_lines) else ''
+            formatted_order_book.append(f'{bid_line:50} | {ask_line}')
+
+        return '\n'.join(formatted_order_book)
+    
     def adding_quotes_into_queues(self, updt: str):
-        self.clear_bid()
-        self.clear_ask()
+        # self.clear_bid()
+        # self.clear_ask()
         parsed_str_list = updt.split(';')
         print(f'{bcolors.OKGREEN} parsed_str_list: {parsed_str_list} {bcolors.ENDC}')
 
-        data_dict = {item.split('=')[0]: item.split('=')[1] for item in parsed_str_list if '=' in item}
+        data_dict = {item.split('=')[0].replace('Q ', ''): item.split('=')[1] for item in parsed_str_list if '=' in item}
 
         instrument = data_dict.get('instrument', None)
         if instrument is None:
@@ -329,22 +359,29 @@ class TradeMatchingEngine:
 
             while True:
                 try:
-                    print("Attempting to receive message...")
+                    # print("Attempting to receive message...")
                     update = order_subscriber.recv_string(flags=zmq.NOBLOCK)
-                    print(f"Received Client Msg: {update}")
-                    order_from_client = Order.from_string(update)  # Assuming Order constructor can parse your message
-                    if order_from_client.msg_type == "0":  # order
-                        print("is order")
+                    # print(f"Received Client Msg: {update}")
+                    msg_type = update.split(';')[0]  # Assuming the first field is always the message type
+         
+                    if msg_type == "0":  # order
+                        print(f"{bcolors.OKCYAN}is order: {update} {bcolors.ENDC}")
+                        order_from_client = Order.from_string(update)
                         self.bid_ask.client_orders.append(order_from_client)
                         print(f"{len(self.bid_ask.client_orders)} queued.")
                         # TODO: send ack order msg
-                        ack_order_msg = Ack(order_from_client.sender_comp_id, "3", order_from_client.order_id, -1, order_from_client.price)
+                        ack_order_msg = Ack(order_from_client.SenderCompID, "3", order_from_client.OrderID, -1, order_from_client.Price)
                         data = ack_order_msg.to_string()  # Assuming to_string method to serialize your message
                         ack_publisher.send_string(data)
-                    elif update.startswith("2;order_book"):  # Order book request
+                    elif msg_type == '2':  # Order book request
+                        print("is order book request")
                         trading_pair = update.split(';')[2]
                         order_book = self.bid_ask.get_order_book(trading_pair)
-                        order_book_message = f"order_book;{json.dumps(order_book)}"
+                        
+                        formatted_order_book = self.bid_ask.format_order_book(order_book)  # Fixed line
+                        print(formatted_order_book)  # print the formatted order book to the terminal
+
+                        order_book_message = f"{str(formatted_order_book)}\norder_book;{json.dumps(order_book)}"
                         ack_publisher.send_string(order_book_message)
                     elif update.startswith("4;search_order"):  # Search order request
                         trading_pair, order_id = update.split(';')[2:4]
