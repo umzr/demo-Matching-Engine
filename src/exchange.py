@@ -1,5 +1,6 @@
 from ast import List
 from collections import deque
+import json
 import math
 import zmq
 import time
@@ -52,14 +53,39 @@ class Ack:
     def to_string(self) -> str:
         return f"35={self.MsgType};56={self.TargetCompID};37={self.OrderID};38={self.OrderQty};44={self.Price}"
     
-def parse_quotes(market_data: str) -> List[Order]:
+def parse_quotes(market_data: str, instrument: str) -> List[Order]:
     res = []
-    quote_data = market_data.split()
-    for i in range(0, len(quote_data), 2):
-        price, qty = map(float, quote_data[i:i + 2])
-        market_quote = Order("0", "-1", qty, "-1", price, "-1",
-                             int(time.time() * 1000), "BID", 0)
-        res.append(market_quote)
+    segments = market_data.split(';')
+    print(f"Segments: {segments}")  # Debugging statement to print segments
+    fields = {segment.split('=')[0]: segment.split('=')[1] for segment in segments if '=' in segment}
+    print(f"Fields: {fields}")  # Debugging statement to print fields
+    
+    try:
+        price = float(fields.get('price', 'NaN'))  # Use 'NaN' as a default value if 'price' key is missing
+        qty = float(fields.get('qty', 'NaN'))  # Use 'NaN' as a default value if 'qty' key is missing
+        order_id = fields.get('id', None)
+        time = int(fields.get('time', '0'))  # Use 0 as a default value if 'time' key is missing
+        is_buyer_maker = fields.get('is_buyer_maker', 'False').lower() == 'true'
+    except ValueError as ve:
+        print(f"ValueError: {ve}, market_data: {market_data}")
+        return res  # Return empty list if parsing fails
+
+    if math.isnan(price) or math.isnan(qty) or order_id is None:
+        print(f"Missing required field(s) in market_data: {market_data}")
+        return res  # Return empty list if required fields are missing
+
+    # You'll need to decide on values for the following fields based on your application logic
+    msg_type = "0"  # placeholder
+    ord_type = "2"  # placeholder, Limit order
+    sender_comp_id = "EXCHANGE"  # placeholder
+    side = "1" if is_buyer_maker else "2"  # 1 = Buy, 2 = Sell
+    pov_target_percentage = 0.0  # placeholder
+
+    market_quote = Order(
+        msg_type, order_id, qty, ord_type, price, sender_comp_id,
+        time, side, pov_target_percentage
+    )
+    res.append(market_quote)
     return res
 
 
@@ -91,6 +117,17 @@ class BidAskQueue:
         self.client_orders = []
         self.executed_trades = {}  # {instrument: []}
 
+    def search_order(self, order_id):
+        for instrument, queue in self.bid_queue.items():
+            for order in queue:
+                if order.OrderID == order_id:
+                    return order, instrument, "bid"
+        for instrument, queue in self.ask_queue.items():
+            for order in queue:
+                if order.OrderID == order_id:
+                    return order, instrument, "ask"
+        return None, None, None  # Return None values if order not found
+    
     def insert_bid(self, instrument, ord: Order):
         if instrument not in self.bid_queue:
             self.bid_queue[instrument] = deque()
@@ -113,8 +150,20 @@ class BidAskQueue:
             "asks": list(ask_queue)
         }
 
-    def insert_ask(self, ord: Order):
-        self.ask_queue.append(ord)
+    def print_order_book(self, instrument):
+        order_book = self.get_order_book(instrument)
+        print(f"Order Book for {instrument}:")
+        print("Bids:")
+        for bid in order_book["bids"]:
+            print(f"Price: {bid['price']}, Quantity: {bid['qty']}")
+        print("Asks:")
+        for ask in order_book["asks"]:
+            print(f"Price: {ask['price']}, Quantity: {ask['qty']}")
+            
+    def insert_ask(self, instrument, ord: Order):
+        if instrument not in self.ask_queue:
+            self.ask_queue[instrument] = deque()
+        self.ask_queue[instrument].append(ord)
 
     def clear_bid(self):
         self.bid_queue.clear()
@@ -130,38 +179,48 @@ class BidAskQueue:
 
     def fill_orders(self, filled_orders: List[Ack]) -> bool:
         res = False
-        for ask in self.ask_queue:
-            print(f"ask price: {ask.Price}")
-        if self.client_orders:
-            print(f"cur qty: {self.client_orders[0].OrderQty}, askQueueSize: {len(self.ask_queue)}, clientOrderSize: {len(self.client_orders)}")
         for client in self.client_orders[:]:
-            for ask in self.ask_queue[:]:
+            instrument = client.instrument  # Assuming 'instrument' attribute in Order class
+            ask_queue_for_instrument = self.ask_queue.get(instrument, deque())  
+            if not ask_queue_for_instrument:
+                continue  
+            for ask in ask_queue_for_instrument[:]:
+                print(f"ask price: {ask.Price}")  
                 if client.Price == ask.Price:
                     res = True
                     amount_filled = min(client.OrderQty, ask.OrderQty)
                     client.OrderQty -= amount_filled
-                    print(f"Filled :{amount_filled} ,order: {client.to_string()}")
+                    print(f"Filled: {amount_filled} ,order: {client.to_string()}")  # Logging filled order
                     ack_message = Ack(client.SenderCompID, "4", client.OrderID, amount_filled, client.Price)
                     filled_orders.append(ack_message)
-            if client.OrderQty == 0:
-                self.client_orders.remove(client)
+                if client.OrderQty == 0:
+                    self.client_orders.remove(client)
+                    break  # Order is fully filled, break out of the inner loop
+        print(f"cur qty: {self.client_orders[0].OrderQty if self.client_orders else 'N/A'}, "  # Logging current qty
+              f"askQueueSize: {sum(len(q) for q in self.ask_queue.values())}, "  # Total size of all ask queues
+              f"clientOrderSize: {len(self.client_orders)}")  # Logging client order size
         return res
+
 
     def adding_quotes_into_queues(self, updt: str):
         self.clear_bid()
         self.clear_ask()
         parsed_str_list = updt.split(';')
-        for idx, parsed_str in enumerate(parsed_str_list):
-            if idx == 2:
-                bid_quotes = self.parse_quotes(parsed_str)
+        instrument = parsed_str_list[0].split('=')[1]  # assuming the first segment is instrument info
+        for idx, parsed_str in enumerate(parsed_str_list[1:]):  # start enumeration from the second segment
+            if idx == 1:
+                bid_quotes = parse_quotes(parsed_str, instrument)
                 for quote in bid_quotes:
-                    self.insert_bid(quote)
+                    self.insert_bid(instrument, quote)
                     print(f"BID PARSER: {quote.to_string()}")
-            elif idx == 3:
-                ask_quotes = self.parse_quotes(parsed_str)
+            elif idx == 2:
+                ask_quotes = parse_quotes(parsed_str, instrument)
                 for quote in ask_quotes:
-                    self.insert_ask(quote)
+                    self.insert_ask(instrument, quote)
                     print(f"ASK PARSER: {quote.to_string()}")
+
+
+
 
     def parse_quotes(self, quotes_str: str) -> List[Order]:
         # Assume each quote is separated by a comma for simplicity
@@ -211,13 +270,14 @@ class TradeMatchingEngine:
         time.sleep(0.2)  # Equivalent to usleep(200000)
 
         while True:
+            print("waiting...")
             update = subscriber.recv_string()
-            print(f"Received Market Msg: {update}")
+            # print(f"Received Market Msg: {update}")
             self.bid_ask.adding_quotes_into_queues(update)
 
-            print("waiting...")
             while True:
                 try:
+                    print("Attempting to receive message...")
                     update = order_subscriber.recv_string(flags=zmq.NOBLOCK)
                     print(f"Received Client Msg: {update}")
                     order_from_client = Order(update)  # Assuming Order constructor can parse your message
@@ -229,12 +289,24 @@ class TradeMatchingEngine:
                         ack_order_msg = Ack(order_from_client.sender_comp_id, "3", order_from_client.order_id, -1, order_from_client.price)
                         data = ack_order_msg.to_string()  # Assuming to_string method to serialize your message
                         ack_publisher.send_string(data)
-                    else:
-                        print("is not order")
-                        cancelled_orders = []
-                        self.bid_ask.cancel_order(order_from_client, cancelled_orders)
-                        # TODO: send all messages
-                        # ... your logic to send all messages
+                    elif update.startswith("2;order_book"):  # Order book request
+                        trading_pair = update.split(';')[2]
+                        order_book = self.bid_ask.get_order_book(trading_pair)
+                        order_book_message = f"order_book;{json.dumps(order_book)}"
+                        ack_publisher.send_string(order_book_message)
+                    elif update.startswith("4;search_order"):  # Search order request
+                        trading_pair, order_id = update.split(';')[2:4]
+                        order, instrument, order_type = self.bid_ask.search_order(order_id)
+                        if order:
+                            order_data = {
+                                "instrument": instrument,
+                                "order_type": order_type,
+                                # ... other order details ...
+                            }
+                            search_order_message = f"search_order;{json.dumps(order_data)}"
+                            ack_publisher.send_string(search_order_message)
+                        else:
+                            ack_publisher.send_string(f"search_order;Order {order_id} not found")
                 except zmq.Again:
                     break
 
