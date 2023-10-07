@@ -6,7 +6,16 @@ import zmq
 import time
 from typing import List, Union
 
-
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
 
 class Order:
     def __init__(self, msg_type: str, order_id: str, order_qty: float, ord_type: str, price: float,
@@ -53,6 +62,7 @@ class Ack:
     def to_string(self) -> str:
         return f"35={self.MsgType};56={self.TargetCompID};37={self.OrderID};38={self.OrderQty};44={self.Price}"
     
+
 def parse_quotes(market_data: str, instrument: str) -> List[Order]:
     res = []
     segments = market_data.split(';')
@@ -61,33 +71,45 @@ def parse_quotes(market_data: str, instrument: str) -> List[Order]:
     print(f"Fields: {fields}")  # Debugging statement to print fields
     
     try:
-        price = float(fields.get('price', 'NaN'))  # Use 'NaN' as a default value if 'price' key is missing
-        qty = float(fields.get('qty', 'NaN'))  # Use 'NaN' as a default value if 'qty' key is missing
-        order_id = fields.get('id', None)
-        time = int(fields.get('time', '0'))  # Use 0 as a default value if 'time' key is missing
-        is_buyer_maker = fields.get('is_buyer_maker', 'False').lower() == 'true'
+        bid_price = float(fields.get('best_bid_price', 'NaN'))  # Using the correct key 'best_bid_price'
+        bid_qty = float(fields.get('best_bid_qty', 'NaN'))  # Using the correct key 'best_bid_qty'
+        ask_price = float(fields.get('best_ask_price', 'NaN'))  # Using the correct key 'best_ask_price'
+        ask_qty = float(fields.get('best_ask_qty', 'NaN'))  # Using the correct key 'best_ask_qty'
+        transaction_time = int(fields.get('transaction_time', '0'))  # Using the correct key 'transaction_time'
+        event_time = int(fields.get('event_time', '0'))  # Using the correct key 'event_time'
     except ValueError as ve:
         print(f"ValueError: {ve}, market_data: {market_data}")
         return res  # Return empty list if parsing fails
 
-    if math.isnan(price) or math.isnan(qty) or order_id is None:
-        print(f"Missing required field(s) in market_data: {market_data}")
-        return res  # Return empty list if required fields are missing
+    if not (math.isnan(bid_price) or math.isnan(bid_qty)):
+        bid_order = Order(
+            msg_type="0",
+            order_id=f"{instrument}_bid_{event_time}",  # Creating a unique order ID based on instrument and event_time
+            order_qty=bid_qty,
+            ord_type="2",
+            price=bid_price,
+            sender_comp_id="EXCHANGE",
+            sending_time=transaction_time,
+            side="1",  # 1 = Buy
+            pov_target_percentage=0.0  # placeholder
+        )
+        res.append(bid_order)
 
-    # You'll need to decide on values for the following fields based on your application logic
-    msg_type = "0"  # placeholder
-    ord_type = "2"  # placeholder, Limit order
-    sender_comp_id = "EXCHANGE"  # placeholder
-    side = "1" if is_buyer_maker else "2"  # 1 = Buy, 2 = Sell
-    pov_target_percentage = 0.0  # placeholder
+    if not (math.isnan(ask_price) or math.isnan(ask_qty)):
+        ask_order = Order(
+            msg_type="0",
+            order_id=f"{instrument}_ask_{event_time}",  # Creating a unique order ID based on instrument and event_time
+            order_qty=ask_qty,
+            ord_type="2",
+            price=ask_price,
+            sender_comp_id="EXCHANGE",
+            sending_time=transaction_time,
+            side="2",  # 2 = Sell
+            pov_target_percentage=0.0  # placeholder
+        )
+        res.append(ask_order)
 
-    market_quote = Order(
-        msg_type, order_id, qty, ord_type, price, sender_comp_id,
-        time, side, pov_target_percentage
-    )
-    res.append(market_quote)
     return res
-
 
 def rounding_off_float(val: float, precision: int = 10000) -> float:
     return round(val * precision) / precision
@@ -206,19 +228,49 @@ class BidAskQueue:
         self.clear_bid()
         self.clear_ask()
         parsed_str_list = updt.split(';')
-        instrument = parsed_str_list[0].split('=')[1]  # assuming the first segment is instrument info
-        for idx, parsed_str in enumerate(parsed_str_list[1:]):  # start enumeration from the second segment
-            if idx == 1:
-                bid_quotes = parse_quotes(parsed_str, instrument)
-                for quote in bid_quotes:
-                    self.insert_bid(instrument, quote)
-                    print(f"BID PARSER: {quote.to_string()}")
-            elif idx == 2:
-                ask_quotes = parse_quotes(parsed_str, instrument)
-                for quote in ask_quotes:
-                    self.insert_ask(instrument, quote)
-                    print(f"ASK PARSER: {quote.to_string()}")
+        print(f'{bcolors.OKGREEN} parsed_str_list: {parsed_str_list} {bcolors.ENDC}')
 
+        data_dict = {item.split('=')[0]: item.split('=')[1] for item in parsed_str_list if '=' in item}
+
+        instrument = data_dict.get('instrument', None)
+        if instrument is None:
+            print(f'{bcolors.FAIL}No instrument found{bcolors.ENDC}')
+            return
+
+        bid_price = data_dict.get('best_bid_price', None)
+        bid_qty = data_dict.get('best_bid_qty', None)
+        ask_price = data_dict.get('best_ask_price', None)
+        ask_qty = data_dict.get('best_ask_qty', None)
+
+        if bid_price is not None and bid_qty is not None:
+            bid_order = Order(  # Assume you have defined the Order class and this constructor call is valid
+                msg_type='D',
+                order_id='some_id',  # You'll need to generate or obtain an order ID
+                order_qty=float(bid_qty),
+                ord_type='2',
+                price=float(bid_price),
+                sender_comp_id='EXCHANGE',
+                sending_time=int(data_dict.get('transaction_time', 0)),
+                side='1',
+                pov_target_percentage=0.0
+            )
+            self.insert_bid(instrument, bid_order)
+            print(f"BID PARSER: {bid_order.to_string()}")
+
+        if ask_price is not None and ask_qty is not None:
+            ask_order = Order(  # Assume you have defined the Order class and this constructor call is valid
+                msg_type='D',
+                order_id='some_id',  # You'll need to generate or obtain an order ID
+                order_qty=float(ask_qty),
+                ord_type='2',
+                price=float(ask_price),
+                sender_comp_id='EXCHANGE',
+                sending_time=int(data_dict.get('transaction_time', 0)),
+                side='2',
+                pov_target_percentage=0.0
+            )
+            self.insert_ask(instrument, ask_order)
+            print(f"ASK PARSER: {ask_order.to_string()}")
 
 
 
@@ -280,7 +332,7 @@ class TradeMatchingEngine:
                     print("Attempting to receive message...")
                     update = order_subscriber.recv_string(flags=zmq.NOBLOCK)
                     print(f"Received Client Msg: {update}")
-                    order_from_client = Order(update)  # Assuming Order constructor can parse your message
+                    order_from_client = Order.from_string(update)  # Assuming Order constructor can parse your message
                     if order_from_client.msg_type == "0":  # order
                         print("is order")
                         self.bid_ask.client_orders.append(order_from_client)

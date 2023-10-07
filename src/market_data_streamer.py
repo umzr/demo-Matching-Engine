@@ -8,20 +8,29 @@ def process_csv(file_path, publisher, instrument):
     print(f'Opening file: {file_path}')
     content = []
     with open(file_path, newline='') as file:
-        csv_reader = csv.reader(file)  # Change from csv.DictReader to csv.reader
+        csv_reader = csv.reader(file)
+        header = next(csv_reader)  # Skip header row
         for row in csv_reader:
             content.append(row)
 
     row_idx = 0
     while row_idx < len(content):
         row = content[row_idx]
-        data = f"instrument={instrument};id={row[0]};price={row[1]};qty={row[2]};base_qty={row[3]};time={row[4]};is_buyer_maker={row[5]};"
+        data = (
+            f"instrument={instrument};"
+            f"update_id={row[0]};"
+            f"best_bid_price={row[1]};"
+            f"best_bid_qty={row[2]};"
+            f"best_ask_price={row[3]};"
+            f"best_ask_qty={row[4]};"
+            f"transaction_time={row[5]};"
+            f"event_time={row[6]};"
+        )
         print(f'sent: {data}')
         data = f"Q {data}"
-        publisher.send_string(data)  # Assuming you've changed the send to send_string as per previous instructions
+        publisher.send_string(data)
         row_idx += 1
-        time.sleep(1)  # Add a delay between sends, adjust as needed
-
+        time.sleep(1)
 
 def main():
     if len(sys.argv) != 3:
@@ -48,4 +57,4 @@ if __name__ == "__main__":
     main()
 
 
-# poetry run python market_data_streamer.py data/BTCUSDT-trades.csv data/ETHUSDT-trades.csv
+# poetry run python market_data_streamer.py data/BTCUSDT-bookTicker.csv data/ETHUSDT-bookTicker.csv

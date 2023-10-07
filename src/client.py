@@ -1,6 +1,7 @@
 import zmq
 import threading
 import json
+from typing import Dict
 
 class TradingClient:
     def __init__(self):
@@ -19,41 +20,73 @@ class TradingClient:
         self.listen_for_acks()
 
     def handle_user_input(self):
+        commands = {
+            '1': ('Place Order', self.place_order),
+            '2': ('Cancel Order', self.cancel_order),
+            '3': ('Retrieve Order Book', self.retrieve_order_book),
+            '4': ('Retrieve Executed Trades', self.retrieve_executed_trades),
+            '5': ('Search Order', self.search_order),
+        }
+
         while True:
-            user_command = input("Enter command (place/cancel/book/trades/search): ")
-            trading_pair = input("Enter trading pair (btc/usdt or eth/usdt): ").lower()
-            if trading_pair not in ["btc/usdt", "eth/usdt"]:
-                print("Invalid trading pair. Try again.")
+            print("Commands:")
+            for num, (desc, _) in commands.items():
+                print(f"{num}. {desc}")
+
+            user_command = input("Enter command number: ")
+
+            if user_command not in commands:
+                print("Invalid command number. Try again.")
                 continue
 
-            if user_command == "place":
-                order_details = input("Enter order details: ")
-                self.place_order(f"{trading_pair};{order_details}")
-            elif user_command == "cancel":
-                order_id = input("Enter order ID to cancel: ")
-                self.cancel_order(f"{trading_pair};{order_id}")
-            elif user_command == "book":
-                self.retrieve_order_book(trading_pair)
-            elif user_command == "trades":
-                self.retrieve_executed_trades(trading_pair)
-            elif user_command == "search":
-                order_id = input("Enter order ID to search: ")
-                self.search_order(order_id)
-            else:
-                print("Unknown command. Try again.")
+            trading_pair = ''
+            if user_command in ['1', '2', '3', '4']:  # commands that require a trading pair
+                trading_pair = input("Enter trading pair (btc/usdt or eth/usdt): ").lower()
+                if trading_pair not in ["btc/usdt", "eth/usdt"]:
+                    print("Invalid trading pair. Try again.")
+                    continue
 
-    def search_order(self, order_id):
-        request_message = f"4;search_order;{order_id}"
-        print(f"Sending search order request: {request_message}")
-        self.order_publisher.send_string(request_message)
-        
+            if user_command == '1':  # Place Order
+                order_details = input("Enter order details: ")
+                commands[user_command][1](f"{trading_pair};{order_details}")
+            elif user_command == '2':  # Cancel Order
+                order_id = input("Enter order ID to cancel: ")
+                commands[user_command][1](f"{trading_pair};{order_id}")
+            elif user_command == '5':  # Search Order
+                order_id = input("Enter order ID to search: ")
+                commands[user_command][1](order_id)
+            else:
+                commands[user_command][1](trading_pair)
+
+
+    def format_message(self, msg_type: str, fields: Dict[str, str]) -> str:
+        """
+        Format a message according to the specified rules.
+        """
+        msg = f"35={msg_type};"
+        msg += ';'.join(f"{key}={value}" for key, value in fields.items())
+        return msg
+
+    def parse_message(self, msg: str) -> Dict[str, str]:
+        """
+        Parse a message according to the specified rules.
+        """
+        segments = msg.split(';')
+        fields = {segment.split('=')[0]: segment.split('=')[1] for segment in segments if '=' in segment}
+        return fields
+
     def place_order(self, order_details):
-        order_message = f"0;{order_details}"  # Assuming a simplistic message format
+        # Split the order_details string by ';' to get individual key-value pairs,
+        # then split each pair by '=' to get a dictionary of fields.
+        fields = dict(item.split('=') for item in order_details.split(';'))
+        order_message = self.format_message("0", fields)  # Assuming msg_type "0" for new orders
         print(f"Sending order: {order_message}")
         self.order_publisher.send_string(order_message)
 
+
     def cancel_order(self, order_id):
-        cancel_message = f"1;{order_id}"  # Assuming a simplistic message format
+        fields = {"37": order_id}  # Assuming "37" is the key for OrderID
+        cancel_message = self.format_message("1", fields)  # Assuming msg_type "1" for cancel orders
         print(f"Sending cancel: {cancel_message}")
         self.order_publisher.send_string(cancel_message)
 
@@ -67,22 +100,25 @@ class TradingClient:
         print(f"Sending executed trades request: {request_message}")
         self.order_publisher.send_string(request_message)
 
+    def search_order(self, order_id):
+        request_message = f"4;search_order;{order_id}"
+        print(f"Sending search order request: {request_message}")
+        self.order_publisher.send_string(request_message)
+        
     def listen_for_acks(self):
         while True:
             ack_message = self.ack_subscriber.recv_string()
+            fields = self.parse_message(ack_message)
+            print(f"Received Ack: {fields}")
 
-            print(f"Received Ack: {ack_message}")
-            if ack_message.startswith("order_book"):
-                order_book_data = ack_message.split(';', 1)[1]
-                order_book = json.loads(order_book_data)
+            if fields.get("35") == "order_book":  # Assuming msg_type "order_book" for order book updates
+                order_book = json.loads(fields.get("data", "{}"))
                 print(f"Order Book: {order_book}")
-            elif ack_message.startswith("executed_trades"):
-                executed_trades_data = ack_message.split(';', 1)[1]
-                executed_trades = json.loads(executed_trades_data)
+            elif fields.get("35") == "executed_trades":  # Assuming msg_type "executed_trades" for executed trades updates
+                executed_trades = json.loads(fields.get("data", "{}"))
                 print(f"Executed Trades: {executed_trades}")
-            elif ack_message.startswith("search_order"):
-                search_order_data = ack_message.split(';', 1)[1]
-                order_data = json.loads(search_order_data)
+            elif fields.get("35") == "search_order":  # Assuming msg_type "search_order" for search order responses
+                order_data = json.loads(fields.get("data", "{}"))
                 print(f"Order Data: {order_data}")
 
 if __name__ == "__main__":
