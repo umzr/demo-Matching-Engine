@@ -159,7 +159,8 @@ class BidAskQueue:
         self.ask_queue = {}  # {instrument: deque()}
         self.client_orders = []
         self.executed_trades = {}  # {instrument: []}
-
+        self.order_counter = 0  
+        
     def search_order(self, order_id):
         for instrument, queue in self.bid_queue.items():
             for order in queue:
@@ -170,6 +171,16 @@ class BidAskQueue:
                 if order.OrderID == order_id:
                     return order, instrument, "ask"
         return None, None, None  # Return None values if order not found
+    
+    def search_user_order(self, USER_ID):
+        res = []
+        for client_order in self.client_orders:
+            print(f"{bcolors.WARNING}search_user_order: {client_order} {bcolors.ENDC}")
+            if client_order.SenderCompID == USER_ID[0]:  # Changed from OrderID to SenderCompID
+                res.append(client_order.to_string())    
+            # res.append(client_order.SenderCompID)
+            # res.append(USER_ID)
+        return res
     
     def insert_bid(self, instrument, ord: Order):
         if instrument not in self.bid_queue:
@@ -293,7 +304,7 @@ class BidAskQueue:
     
     def adding_quotes_into_queues(self, updt: str):
         # Assuming you have a method to generate unique order IDs
-        self.order_counter = 0  
+        
 
         # self.clear_bid()
         # self.clear_ask()
@@ -311,12 +322,13 @@ class BidAskQueue:
         bid_qty = data_dict.get('best_bid_qty', None)
         ask_price = data_dict.get('best_ask_price', None)
         ask_qty = data_dict.get('best_ask_qty', None)
+        event_time = int(data_dict.get('event_time', '0'))
 
         if bid_price is not None and bid_qty is not None:
             self.order_counter += 1  # Increment order_counter for a new order ID
             bid_order = Order(
                 msg_type='D',
-                order_id=str(self.order_counter),  # Use order_counter as order ID
+                order_id=f"{instrument}_bid_{event_time}",
                 order_qty=float(bid_qty),
                 ord_type='2',
                 price=float(bid_price),
@@ -333,7 +345,7 @@ class BidAskQueue:
             self.order_counter += 1  # Increment order_counter for a new order ID
             ask_order = Order(
                 msg_type='D',
-                order_id=str(self.order_counter),  # Use order_counter as order ID
+                order_id=f"{instrument}_bid_{event_time}",  # Use order_counter as order ID
                 order_qty=float(ask_qty),
                 ord_type='2',
                 price=float(ask_price),
@@ -431,19 +443,16 @@ class TradeMatchingEngine:
                         print(formatted_order_book)  # print the formatted order book to the terminal
                         order_book_message = f"order_book;{json.dumps(order_book)}"
                         ack_publisher.send_string(order_book_message)
-                    elif update.startswith("4;search_order"):  # Search order request
-                        trading_pair, order_id = update.split(';')[2:4]
-                        order, instrument, order_type = self.bid_ask.search_order(order_id)
+                    elif update.startswith("5;search_order"):  # Search order request
+                        USER_ID = update.split(';')[2:3]
+                        
+                        order = self.bid_ask.search_user_order(USER_ID)
+                        print(f"{bcolors.OKCYAN}------------------------>search_order: {order} {bcolors.ENDC}")
                         if order:
-                            order_data = {
-                                "instrument": instrument,
-                                "order_type": order_type,
-                                # ... other order details ...
-                            }
-                            search_order_message = f"search_order;{json.dumps(order_data)}"
+                            search_order_message = f"search_order;{order}"
                             ack_publisher.send_string(search_order_message)
                         else:
-                            ack_publisher.send_string(f"search_order;Order {order_id} not found")
+                            ack_publisher.send_string(f"search_order;Order {USER_ID} {order}not found")
                 except zmq.Again:
                     break
 

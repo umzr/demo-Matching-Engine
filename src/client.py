@@ -95,7 +95,7 @@ class TradingClient:
                 order_id = input("Enter order ID to cancel: ")
                 commands[user_command][1](f"{trading_pair};{order_id}")
             elif user_command == '5':  # Search Order
-                order_id = input("Enter order ID to search: ")
+                order_id = self.sender_comp_id
                 commands[user_command][1](order_id)
             else:
                 commands[user_command][1](trading_pair)
@@ -148,19 +148,7 @@ class TradingClient:
             self.order_publisher.send_string(order_message)
         except ValueError as e:
             print(f"Error: {e}. Please ensure that order details are formatted correctly.")
-
-
-    # def place_order(self, order_details):
-    #     try:
-    #         fields = dict(item.split('=') for item in order_details.split(';') if '=' in item)
-    #         order_message = self.format_message("0", fields)  # Assuming msg_type "0" for new orders
-    #         print(f"Sending order: {order_message}")
-    #         self.order_publisher.send_string(order_message)
-    #     except ValueError as e:
-    #         print(f"Error: {e}. Please ensure that order details are formatted correctly.")
-
-
-
+            
     def cancel_order(self, order_id):
         fields = {"37": order_id}  # Assuming "37" is the key for OrderID
         cancel_message = self.format_message("1", fields)  # Assuming msg_type "1" for cancel orders
@@ -178,7 +166,7 @@ class TradingClient:
         self.order_publisher.send_string(request_message)
 
     def search_order(self, order_id):
-        request_message = f"4;search_order;{order_id}"
+        request_message = f"5;search_order;{order_id}"
         print(f"Sending search order request: {request_message}")
         self.order_publisher.send_string(request_message)
         
