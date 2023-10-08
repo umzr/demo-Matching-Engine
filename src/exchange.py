@@ -356,7 +356,7 @@ class BidAskQueue:
             )
             self.insert_bid(instrument, bid_order)
             print(f"BID PARSER: {bid_order.to_string()}")
-
+        print("in?????????")
         if ask_price is not None and ask_qty is not None:
             self.order_counter += 1  # Increment order_counter for a new order ID
             ask_order = Order(
@@ -395,16 +395,17 @@ class BidAskQueue:
 
     def cancel_order(self, order_id):
         for instrument, queue in self.bid_queue.items():
+            
             for order in queue:
                 if order.OrderID == order_id:
                     queue.remove(order)
-                    return f"Order {order_id} canceled"
+                    return True, f"Order {order_id} canceled"
         for instrument, queue in self.ask_queue.items():
             for order in queue:
                 if order.OrderID == order_id:
                     queue.remove(order)
-                    return f"Order {order_id} canceled"
-        return f"Order {order_id} not found"
+                    return True, f"Order {order_id} canceled"
+        return False, f"Order {order_id} not found"
     
     def try_fill_3mins_order(self, filled_orders: List[Ack]) -> bool:
         res = False
@@ -464,12 +465,26 @@ class TradeMatchingEngine:
                         ack_publisher.send_string(data)
                         
                     elif msg_type == '1':  # Cancel order request
-                        order_id = update.split(';')[2]
-                        print(f"{bcolors.OKCYAN}is cancel order: {order_id} {bcolors.ENDC}")
-                        cancel_message = self.bid_ask.cancel_order(order_id)
-                        print(f"{bcolors.OKCYAN}{cancel_message}{bcolors.ENDC}")
-                        ack_publisher.send_string(f"cancel_order;{cancel_message}")
-                        
+                        segments = update.split(';')
+                        order_id = None
+                        for segment in segments:
+                            key, sep, value = segment.partition('=')
+                            if key == '37':  # Assuming 37 is the tag for order ID
+                                order_id = value
+                                break
+
+                        if order_id:
+                            print(f"{bcolors.OKCYAN}is cancel order: {order_id} {bcolors.ENDC}")
+                            ack_publisher.send_string(f"{bcolors.OKCYAN}Cancel order: {order_id} {bcolors.ENDC}")
+
+                            # Assuming cancel_order method returns a tuple (success, message)
+                            success, cancel_message = self.bid_ask.cancel_order(order_id)
+                            print(f"{bcolors.OKCYAN}{cancel_message}{bcolors.ENDC}")
+                            ack_publisher.send_string(f"cancel_order;{cancel_message}")
+                        else:
+                            print(f"{bcolors.FAIL}Invalid cancel order request: {update}{bcolors.ENDC}")
+                            ack_publisher.send_string(f"cancel_order;Invalid cancel order request: {update}")
+
                     elif msg_type == '2':  # Order book request
                         # finish
                         print("is order book request")

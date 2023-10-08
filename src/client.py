@@ -93,21 +93,23 @@ class TradingClient:
                 commands[user_command][1](f"{trading_pair};{order_details}")
             elif user_command == '2':  # Cancel Order
                 order_id = input("Enter order ID to cancel: ")
-                commands[user_command][1](f"{order_id}")
+                commands[user_command][1](order_id)
             elif user_command == '5':  # Search Order
                 order_id = self.sender_comp_id
                 commands[user_command][1](order_id)
             else:
                 commands[user_command][1](trading_pair)
 
-
-    def format_message(self, msg_type: str, fields: Dict[str, str]) -> str:
+    def format_message(self, msg_type: str, fields: Dict[str, str], name: Dict[str, str] = None) -> str:
         """
         Format a message according to the specified rules.
         """
         msg = f"{msg_type};"
+        if name:
+            msg += ';'.join(f"{key}={value}" for key, value in name.items()) + ';'
         msg += ';'.join(f"{key}={value}" for key, value in fields.items())
         return msg
+
 
     def parse_message(self, msg: str) -> Dict[str, str]:
         """
@@ -151,7 +153,8 @@ class TradingClient:
             
     def cancel_order(self, order_id):
         fields = {"37": order_id}  # Assuming "37" is the key for OrderID
-        cancel_message = self.format_message("1", fields)  # Assuming msg_type "1" for cancel orders
+        name = {"49": self.sender_comp_id}  # Assuming "49" is the key for SenderCompID
+        cancel_message = self.format_message("1", fields, name)  # Assuming msg_type "1" for cancel orders
         print(f"Sending cancel: {cancel_message}")
         self.order_publisher.send_string(cancel_message)
 
