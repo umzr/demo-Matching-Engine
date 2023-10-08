@@ -355,8 +355,9 @@ class BidAskQueue:
                 trading_pair=instrument  # Use instrument as trading_pair
             )
             self.insert_bid(instrument, bid_order)
+            
             print(f"BID PARSER: {bid_order.to_string()}")
-        print("in?????????")
+  
         if ask_price is not None and ask_qty is not None:
             self.order_counter += 1  # Increment order_counter for a new order ID
             ask_order = Order(
@@ -394,6 +395,8 @@ class BidAskQueue:
 
 
     def cancel_order(self, order_id):
+        self.client_orders = [order for order in self.client_orders if order.OrderID != order_id]
+        
         for instrument, queue in self.bid_queue.items():
             
             for order in queue:
@@ -456,6 +459,14 @@ class TradeMatchingEngine:
                         print(f"{bcolors.OKCYAN}is order: {update} {bcolors.ENDC}")
                         order_from_client = Order.from_string(update)
                         self.bid_ask.client_orders.append(order_from_client)
+                        
+                        if order_from_client.Side == "1":  # Bid order
+                            self.bid_ask.insert_bid(order_from_client.TradingPair, order_from_client)
+                        elif order_from_client.Side == "2":  # Ask order
+                            self.bid_ask.insert_ask(order_from_client.TradingPair, order_from_client)
+                        else:
+                            print(f"{bcolors.WARNING}Unknown order side: {order_from_client.Side} for order: {update}{bcolors.ENDC}")
+                        
                         
                         ack_publisher.send_string(f"{bcolors.OKCYAN}{order_from_client.to_string()} queued. {bcolors.ENDC}")
                         
