@@ -164,9 +164,11 @@ class TradingClient:
         self.order_publisher.send_string(request_message)
 
     def retrieve_executed_trades(self, trading_pair):
-        request_message = f"3;executed_trades;{trading_pair}"  # Adding trading pair to the request message
-        print(f"Sending executed trades request: {request_message}")
-        self.order_publisher.send_string(request_message)
+        name = {"49": self.sender_comp_id}  # Added name dictionary
+        pair = {'55': trading_pair }
+        msg = self.format_message("3",pair, name )
+        print(f"Sending executed trades request: {msg}")
+        self.order_publisher.send_string(msg)
 
     def search_order(self, order_id):
         request_message = f"5;search_order;{order_id}"

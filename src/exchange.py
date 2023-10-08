@@ -196,14 +196,21 @@ class BidAskQueue:
             self.bid_queue[instrument] = deque()
         self.bid_queue[instrument].append(ord)
 
-
-    def record_trade(self, instrument, trade):
+    def record_trade(self, instrument, trading_pair, sender_comp_id, executed_orders_info):
+        trade_info = {
+            'TradingPair': trading_pair,
+            'SenderCompID': sender_comp_id,
+            'executed_orders_info': executed_orders_info
+        }
         if instrument not in self.executed_trades:
             self.executed_trades[instrument] = []
-        self.executed_trades[instrument].append(trade)
+        self.executed_trades[instrument].append(trade_info)
 
-    def get_executed_trades(self, instrument):
-        return self.executed_trades.get(instrument, [])
+
+    def get_executed_trades(self, instrument, sender_comp_id):
+        trades = self.executed_trades.get(instrument, [])
+        return [trade for trade in trades if trade['SenderCompID'] == sender_comp_id]
+
     
     def get_order_book(self, instrument):
         bid_queue = self.bid_queue.get(instrument, deque())
@@ -276,6 +283,8 @@ class BidAskQueue:
                 f"askQueueSize: {sum(len(q) for q in self.ask_queue.values())}, " + \
                 f"clientOrderSize: {len(self.client_orders)}, " + \
                 f"Executed Orders:\n{executed_orders_str}"  # Add executed orders info to the message
+
+        if res: self.record_trade(instrument, client.TradingPair, client.SenderCompID, executed_orders_info)
 
         print(f"cur qty: {self.client_orders[0].OrderQty if self.client_orders else 'N/A'}",  # Logging current qty
             f"askQueueSize: {sum(len(q) for q in self.ask_queue.values())}",  # Total size of all ask queues
@@ -506,6 +515,29 @@ class TradeMatchingEngine:
                         print(formatted_order_book)  # print the formatted order book to the terminal
                         order_book_message = f"order_book;{json.dumps(order_book)}"
                         ack_publisher.send_string(order_book_message)
+                        
+                    elif msg_type == '3':  # retrieve_executed_trades
+                        print("is retrieve_executed_trades")
+                        segments = update.split(';')
+                        trading_pair = None
+                        user_id = None
+                        for segment in segments:
+                            key, sep, value = segment.partition('=')
+                            if key == '55':  # Assuming 55 is the tag for trading pair
+                                trading_pair = value
+                            elif key == '49':  # Assuming 49 is the tag for user id
+                                user_id = value
+                        
+                        if trading_pair is not None and user_id is not None:
+                            ack_publisher.send_string(f"{trading_pair} {user_id}")
+                            res = self.bid_ask.get_executed_trades(trading_pair, user_id)
+                            ack_publisher.send_string(f"retrieve_executed_trades;{json.dumps(res)}")
+                            # executed_trades = self.bid_ask.get_executed_trades(trading_pair)
+                        else:
+                            print("Error: Missing trading pair or user id in update")
+                            # Optionally, send an error message back to the requester
+
+                        
                     elif update.startswith("5;search_order"):  # Search order request
                         USER_ID = update.split(';')[2:3]
                         
