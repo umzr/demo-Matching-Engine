@@ -38,9 +38,14 @@ class Order:
     def from_string(cls, msg: str):
         segments = msg.split(';')
         fields = {segment.split('=')[0]: segment.split('=')[1] for segment in segments if '=' in segment}
+        try:
+            sending_time = int(fields['52'])
+        except ValueError:
+            raise ValueError(f"Expected integer for sending_time, got: {fields['52']}")
+        # ... repeat for other fields you expect to convert ...
         return cls(
             fields['35'], fields['37'], float(fields['38']), fields['40'], float(fields['44']), fields['49'],
-            int(fields['52']), fields['54'], float(fields['6404']), fields['55']  # Added trading_pair
+            sending_time, fields['54'], float(fields['6404']), fields['55']  # Added trading_pair
         )
 
     def to_string(self) -> str:
@@ -381,7 +386,8 @@ class TradeMatchingEngine:
                         print(f"{bcolors.OKCYAN}is order: {update} {bcolors.ENDC}")
                         order_from_client = Order.from_string(update)
                         self.bid_ask.client_orders.append(order_from_client)
-                        print(f"{len(self.bid_ask.client_orders)} queued.")
+                        
+                        ack_publisher.send_string(f"{bcolors.OKCYAN}{len(self.bid_ask.client_orders)} queued. {bcolors.ENDC}")
                         # TODO: send ack order msg
                         ack_order_msg = Ack(order_from_client.SenderCompID, "3", order_from_client.OrderID, -1, order_from_client.Price)
                         data = ack_order_msg.to_string()  # Assuming to_string method to serialize your message
@@ -416,6 +422,7 @@ class TradeMatchingEngine:
             filled_orders = []
             self.bid_ask.try_fill_3mins_order(filled_orders)
             if self.bid_ask.fill_orders(filled_orders):
+                ack_publisher.send_string(f"{bcolors.OKGREEN}Filled orders: {(filled_orders)} {bcolors.ENDC}")
                 print("Order filled!")
             else:
                 print("No order filled!")

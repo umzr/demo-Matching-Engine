@@ -12,6 +12,15 @@ class TradingClient:
     def __init__(self):
         self.context = zmq.Context()
 
+        self.subscriber = self.context.socket(zmq.SUB)
+        self.subscriber.connect("tcp://127.0.0.1:5556")
+        self.subscriber.setsockopt_string(zmq.SUBSCRIBE, "Q")
+
+        self.trading_time_thread = threading.Thread(target=self.get_trading_time)
+        self.trading_time_thread.start()
+        self.trading_time = None
+        
+        
         self.order_publisher = self.context.socket(zmq.PUB)
         self.order_publisher.connect("tcp://127.0.0.1:5557")
 
@@ -27,6 +36,24 @@ class TradingClient:
         self.trading_pair = ''
         
         self.listen_for_acks()
+
+    def get_trading_time(self):
+        while True:
+            message = self.subscriber.recv_string()
+
+            trading_time = self.parse_trading_time(message)  # Define this method to parse the message
+            self.trading_time = trading_time  # Assuming a class variable to store the trading time
+
+            
+    def parse_trading_time(self, message):
+        # Assuming the trading time is sent in a message formatted as "TradingTime=HH:MM:SS"
+        try:
+            trading_time = message.split('=')[7]
+            return trading_time
+        except IndexError:
+            print("Failed to parse trading time from message:", message)
+            return None
+
 
     @staticmethod
     def generate_random_id(length=8):
@@ -109,7 +136,7 @@ class TradingClient:
                 f"38={fields['Qty']};"  # Quantity
                 f"40=2;"  # Order type, assuming '2' is the desired value
                 f"44={fields['Price']};"  # Price
-                f"52=-1;"  # Placeholder for sending time, replace with actual value if necessary
+                f"52={self.trading_time};"  # Placeholder for sending time, replace with actual value if necessary
                 f"54={'1' if fields['Side'].lower() == 'buy' else '2'};"  # Side, assuming '1' for Buy and '2' for Sell
                 f"6404=0.0;"  # Placeholder for POV target percentage, replace with actual value if necessary
                 f"55={self.trading_pair}"  # Trading pair
