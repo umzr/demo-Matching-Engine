@@ -184,7 +184,7 @@ class BidAskQueue:
     def search_user_order(self, USER_ID):
         res = []
         for client_order in self.client_orders:
-            print(f"{bcolors.WARNING}search_user_order: {client_order} {bcolors.ENDC}")
+            # print(f"{bcolors.WARNING}search_user_order: {client_order} {bcolors.ENDC}")
             if client_order.SenderCompID == USER_ID[0]:  # Changed from OrderID to SenderCompID
                 res.append(client_order.to_string())    
             # res.append(client_order.SenderCompID)
@@ -250,7 +250,7 @@ class BidAskQueue:
     def fill_orders(self, filled_orders: List[ExtendedAck]) -> bool:
         res = False
         # Log the initial state of client_orders
-        print(f"{bcolors.WARNING}client_orders: {self.client_orders} {bcolors.ENDC}")
+        # print(f"{bcolors.WARNING}client_orders: {self.client_orders} {bcolors.ENDC}")
 
         client_orders_to_remove = []
         executed_orders_info = []  # List to hold information about executed orders
@@ -264,7 +264,7 @@ class BidAskQueue:
                     filled_orders.append(ack_message)
                     client_orders_to_remove.append(client)
                     res = True
-                    executed_orders_info.append(f"Buy Order Executed; Trigger Price: {client.Price}, Action Price: {self.current_prices[instrument]}, Instrument: {instrument}")
+                    executed_orders_info.append(f"Buy Order Executed; Trigger Price: {client.Price}, Action Price: {self.current_prices[instrument]}, Instrument: {instrument}, TradingPair: {client.TradingPair}, SenderCompID: {client.SenderCompID}, OrderID: {client.OrderID}, OrderQty: {client.OrderQty}, OrdType: {client.OrdType}, Side: {client.Side}, POVTargetPercentage: {client.POVTargetPercentage}")
             elif client.Side == "2":  # Sell Order
                 if self.current_prices[instrument] >= client.Price:
                     print(f"Order filled at action price: {self.current_prices[instrument]}, user input price: {client.Price}, order: {client.to_string()}")
@@ -272,8 +272,8 @@ class BidAskQueue:
                     filled_orders.append(ack_message)
                     client_orders_to_remove.append(client)
                     res = True
-                    executed_orders_info.append(f"Sell Order Executed; Trigger Price: {client.Price}, Action Price: {self.current_prices[instrument]}, Instrument: {instrument}")
-
+                    # executed_orders_info.append(f"Sell Order Executed; Trigger Price: {client.Price}, Action Price: {self.current_prices[instrument]}, Instrument: {instrument}")
+                    executed_orders_info.append(f"Buy Order Executed; Trigger Price: {client.Price}, Action Price: {self.current_prices[instrument]}, Instrument: {instrument}, TradingPair: {client.TradingPair}, SenderCompID: {client.SenderCompID}, OrderID: {client.OrderID}, OrderQty: {client.OrderQty}, OrdType: {client.OrdType}, Side: {client.Side}, POVTargetPercentage: {client.POVTargetPercentage}")
         # Remove fully filled client orders from self.client_orders
         for client in client_orders_to_remove:
             self.client_orders.remove(client)
@@ -316,7 +316,7 @@ class BidAskQueue:
     def adding_quotes_into_queues(self, updt: str):
         # Assuming you have a method to generate unique order IDs
         parsed_str_list = updt.split(';')
-        print(f'{bcolors.OKGREEN} parsed_str_list: {parsed_str_list} {bcolors.ENDC}')
+        # print(f'{bcolors.OKGREEN} parsed_str_list: {parsed_str_list} {bcolors.ENDC}')
 
         data_dict = {item.split('=')[0].replace('Q ', ''): item.split('=')[1] for item in parsed_str_list if '=' in item}
 
@@ -365,7 +365,7 @@ class BidAskQueue:
             )
             self.insert_bid(instrument, bid_order)
             
-            print(f"BID PARSER: {bid_order.to_string()}")
+            # print(f"BID PARSER: {bid_order.to_string()}")
   
         if ask_price is not None and ask_qty is not None:
             self.order_counter += 1  # Increment order_counter for a new order ID
@@ -382,7 +382,7 @@ class BidAskQueue:
                 trading_pair=instrument  # Use instrument as trading_pair
             )
             self.insert_ask(instrument, ask_order)
-            print(f"ASK PARSER: {ask_order.to_string()}")
+            # print(f"ASK PARSER: {ask_order.to_string()}")
 
 
 
@@ -451,7 +451,7 @@ class TradeMatchingEngine:
         time.sleep(0.2)  # Equivalent to usleep(200000)
 
         while True:
-            print("waiting...")
+            print(f"{bcolors.OKCYAN} ---------- Exchange Loop ---------- {bcolors.ENDC}")
             update = subscriber.recv_string()
             # print(f"Received Market Msg: {update}")
             self.bid_ask.adding_quotes_into_queues(update)
