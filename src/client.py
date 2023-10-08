@@ -125,3 +125,5 @@ class TradingClient:
 
 if __name__ == "__main__":
     client = TradingClient()
+
+# poetry run python client.py

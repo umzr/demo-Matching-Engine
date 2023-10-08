@@ -2,6 +2,7 @@ from ast import List
 from collections import deque
 import json
 import math
+import shutil
 import zmq
 import time
 from typing import List, Union
@@ -238,8 +239,11 @@ class BidAskQueue:
 
 
     def format_order_book(self, order_book):
-        bid_table = tabulate(order_book['bids'], headers='keys', tablefmt='pretty')
-        ask_table = tabulate(order_book['asks'], headers='keys', tablefmt='pretty')
+        terminal_width, _ = shutil.get_terminal_size()
+        half_width = terminal_width // 2
+
+        bid_table = tabulate(order_book['bids'], headers='keys', tablefmt='plain', numalign="right")
+        ask_table = tabulate(order_book['asks'], headers='keys', tablefmt='plain', numalign="right")
 
         bid_lines = bid_table.split('\n')
         ask_lines = ask_table.split('\n')
@@ -250,7 +254,7 @@ class BidAskQueue:
         for i in range(max_lines):
             bid_line = bid_lines[i] if i < len(bid_lines) else ''
             ask_line = ask_lines[i] if i < len(ask_lines) else ''
-            formatted_order_book.append(f'{bid_line:50} | {ask_line}')
+            formatted_order_book.append(f'{bid_line:{half_width}} | {ask_line:{half_width}}')
 
         return '\n'.join(formatted_order_book)
     
@@ -374,14 +378,14 @@ class TradeMatchingEngine:
                         data = ack_order_msg.to_string()  # Assuming to_string method to serialize your message
                         ack_publisher.send_string(data)
                     elif msg_type == '2':  # Order book request
+                        # finish
                         print("is order book request")
                         trading_pair = update.split(';')[2]
                         order_book = self.bid_ask.get_order_book(trading_pair)
                         
                         formatted_order_book = self.bid_ask.format_order_book(order_book)  # Fixed line
                         print(formatted_order_book)  # print the formatted order book to the terminal
-
-                        order_book_message = f"{str(formatted_order_book)}\norder_book;{json.dumps(order_book)}"
+                        order_book_message = f"order_book;{json.dumps(order_book)}"
                         ack_publisher.send_string(order_book_message)
                     elif update.startswith("4;search_order"):  # Search order request
                         trading_pair, order_id = update.split(';')[2:4]
