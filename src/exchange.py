@@ -222,27 +222,53 @@ class BidAskQueue:
 
     def fill_orders(self, filled_orders: List[Ack]) -> bool:
         res = False
-        for client in self.client_orders[:]:
-            instrument = client.instrument  # Assuming 'instrument' attribute in Order class
-            ask_queue_for_instrument = self.ask_queue.get(instrument, deque())  
+        # Log the initial state of client_orders
+        print(f"{bcolors.WARNING}client_orders: {self.client_orders} {bcolors.ENDC}")
+
+        client_orders_to_remove = []
+        for client in self.client_orders:
+            instrument = client.TradingPair  # Assuming 'TradingPair' attribute is the instrument in Order class
+            ask_queue_for_instrument = self.ask_queue.get(instrument, deque())
+            
             if not ask_queue_for_instrument:
-                continue  
-            for ask in ask_queue_for_instrument[:]:
-                print(f"ask price: {ask.Price}")  
+                continue
+            
+            asks_to_remove = []
+            for ask in ask_queue_for_instrument:
                 if client.Price == ask.Price:
                     res = True
                     amount_filled = min(client.OrderQty, ask.OrderQty)
                     client.OrderQty -= amount_filled
-                    print(f"Filled: {amount_filled} ,order: {client.to_string()}")  # Logging filled order
+                    ask.OrderQty -= amount_filled
+                    
+                    print(f"Filled: {amount_filled}, order: {client.to_string()}")  # Logging filled order
                     ack_message = Ack(client.SenderCompID, "4", client.OrderID, amount_filled, client.Price)
                     filled_orders.append(ack_message)
-                if client.OrderQty == 0:
-                    self.client_orders.remove(client)
-                    break  # Order is fully filled, break out of the inner loop
-        print(f"cur qty: {self.client_orders[0].OrderQty if self.client_orders else 'N/A'}, "  # Logging current qty
-              f"askQueueSize: {sum(len(q) for q in self.ask_queue.values())}, "  # Total size of all ask queues
-              f"clientOrderSize: {len(self.client_orders)}")  # Logging client order size
-        return res
+
+                    if client.OrderQty == 0:
+                        client_orders_to_remove.append(client)
+                        break  # Order is fully filled, break out of the inner loop
+                    
+                    if ask.OrderQty == 0:
+                        asks_to_remove.append(ask)
+            
+            # Remove fully matched asks from ask_queue_for_instrument
+            for ask in asks_to_remove:
+                ask_queue_for_instrument.remove(ask)
+
+        # Remove fully filled client orders from self.client_orders
+        for client in client_orders_to_remove:
+            self.client_orders.remove(client)
+
+        message = f"cur qty: {self.client_orders[0].OrderQty if self.client_orders else 'N/A'}, " + \
+                f"askQueueSize: {sum(len(q) for q in self.ask_queue.values())}, " + \
+                f"clientOrderSize: {len(self.client_orders)}"
+        print(f"cur qty: {self.client_orders[0].OrderQty if self.client_orders else 'N/A'}",  # Logging current qty
+            f"askQueueSize: {sum(len(q) for q in self.ask_queue.values())}",  # Total size of all ask queues
+            f"clientOrderSize: {len(self.client_orders)}")  # Logging client order size
+
+        return res, message
+
 
 
     def format_order_book(self, order_book):
@@ -374,7 +400,7 @@ class TradeMatchingEngine:
             update = subscriber.recv_string()
             # print(f"Received Market Msg: {update}")
             self.bid_ask.adding_quotes_into_queues(update)
-
+            print(f"{bcolors.OKCYAN}  self.bid_ask.client_orders { self.bid_ask.client_orders} {bcolors.ENDC}")
             while True:
                 try:
                     # print("Attempting to receive message...")
@@ -382,12 +408,14 @@ class TradeMatchingEngine:
                     # print(f"Received Client Msg: {update}")
                     msg_type = update.split(';')[0]  # Assuming the first field is always the message type
                     ack_publisher.send_string(update)
+                    
                     if msg_type == "0":  # order
                         print(f"{bcolors.OKCYAN}is order: {update} {bcolors.ENDC}")
                         order_from_client = Order.from_string(update)
                         self.bid_ask.client_orders.append(order_from_client)
                         
-                        ack_publisher.send_string(f"{bcolors.OKCYAN}{len(self.bid_ask.client_orders)} queued. {bcolors.ENDC}")
+                        ack_publisher.send_string(f"{bcolors.OKCYAN}{order_from_client.to_string()} queued. {bcolors.ENDC}")
+                        
                         # TODO: send ack order msg
                         ack_order_msg = Ack(order_from_client.SenderCompID, "3", order_from_client.OrderID, -1, order_from_client.Price)
                         data = ack_order_msg.to_string()  # Assuming to_string method to serialize your message
@@ -420,9 +448,11 @@ class TradeMatchingEngine:
                     break
 
             filled_orders = []
-            self.bid_ask.try_fill_3mins_order(filled_orders)
-            if self.bid_ask.fill_orders(filled_orders):
-                ack_publisher.send_string(f"{bcolors.OKGREEN}Filled orders: {(filled_orders)} {bcolors.ENDC}")
+            # self.bid_ask.try_fill_3mins_order(filled_orders)
+            is_filled, message = self.bid_ask.fill_orders(filled_orders)
+            if is_filled:
+                ack_publisher.send_string(f"{bcolors.OKGREEN}Filled orders: {(filled_orders)} \n{message}{bcolors.ENDC}")
+                
                 print("Order filled!")
             else:
                 print("No order filled!")
