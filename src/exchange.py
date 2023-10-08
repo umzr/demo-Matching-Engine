@@ -83,6 +83,14 @@ class Ack:
     def to_string(self) -> str:
         return f"35={self.MsgType};56={self.TargetCompID};37={self.OrderID};38={self.OrderQty};44={self.Price}"
     
+class ExtendedAck(Ack):
+    def __init__(self, target_comp_id: str, msg_type: str, order_id: str, order_qty: float, price: float, action_price: float):
+        super().__init__(target_comp_id, msg_type, order_id, order_qty, price)
+        self.ActionPrice = action_price  # The price at which the action occurred (market price)
+
+    def to_string(self) -> str:
+        return f"{super().to_string()};1000={self.ActionPrice}"  # Assuming 1000 is the tag for action price
+
 
 def parse_quotes(market_data: str, instrument: str) -> List[Order]:
     res = []
@@ -160,6 +168,7 @@ class BidAskQueue:
         self.client_orders = []
         self.executed_trades = {}  # {instrument: []}
         self.order_counter = 0  
+        self.current_prices = {}
         
     def search_order(self, order_id):
         for instrument, queue in self.bid_queue.items():
@@ -230,8 +239,8 @@ class BidAskQueue:
 
     def pop_ask(self) -> Union[Order, None]:
         return self.ask_queue.popleft() if self.ask_queue else None
-
-    def fill_orders(self, filled_orders: List[Ack]) -> bool:
+    
+    def fill_orders(self, filled_orders: List[ExtendedAck]) -> bool:
         res = False
         # Log the initial state of client_orders
         print(f"{bcolors.WARNING}client_orders: {self.client_orders} {bcolors.ENDC}")
@@ -239,33 +248,20 @@ class BidAskQueue:
         client_orders_to_remove = []
         for client in self.client_orders:
             instrument = client.TradingPair  # Assuming 'TradingPair' attribute is the instrument in Order class
-            ask_queue_for_instrument = self.ask_queue.get(instrument, deque())
-            
-            if not ask_queue_for_instrument:
-                continue
-            
-            asks_to_remove = []
-            for ask in ask_queue_for_instrument:
-                if client.Price == ask.Price:
-                    res = True
-                    amount_filled = min(client.OrderQty, ask.OrderQty)
-                    client.OrderQty -= amount_filled
-                    ask.OrderQty -= amount_filled
-                    
-                    print(f"Filled: {amount_filled}, order: {client.to_string()}")  # Logging filled order
-                    ack_message = Ack(client.SenderCompID, "4", client.OrderID, amount_filled, client.Price)
+            if client.Side == "1":  # Buy Order
+                if self.current_prices[instrument] <= client.Price:
+                    print(f"Order filled at action price: {self.current_prices[instrument]}, user input price: {client.Price}, order: {client.to_string()}")
+                    ack_message = ExtendedAck(client.SenderCompID, "4", client.OrderID, client.OrderQty, client.Price, self.current_prices[instrument])
                     filled_orders.append(ack_message)
-
-                    if client.OrderQty == 0:
-                        client_orders_to_remove.append(client)
-                        break  # Order is fully filled, break out of the inner loop
-                    
-                    if ask.OrderQty == 0:
-                        asks_to_remove.append(ask)
-            
-            # Remove fully matched asks from ask_queue_for_instrument
-            for ask in asks_to_remove:
-                ask_queue_for_instrument.remove(ask)
+                    client_orders_to_remove.append(client)
+                    res = True
+            elif client.Side == "2":  # Sell Order
+                if self.current_prices[instrument] >= client.Price:
+                    print(f"Order filled at action price: {self.current_prices[instrument]}, user input price: {client.Price}, order: {client.to_string()}")
+                    ack_message = ExtendedAck(client.SenderCompID, "4", client.OrderID, client.OrderQty, client.Price, self.current_prices[instrument])
+                    filled_orders.append(ack_message)
+                    client_orders_to_remove.append(client)
+                    res = True
 
         # Remove fully filled client orders from self.client_orders
         for client in client_orders_to_remove:
@@ -279,9 +275,7 @@ class BidAskQueue:
             f"clientOrderSize: {len(self.client_orders)}")  # Logging client order size
 
         return res, message
-
-
-
+    
     def format_order_book(self, order_book):
         terminal_width, _ = shutil.get_terminal_size()
         half_width = terminal_width // 2
@@ -304,10 +298,6 @@ class BidAskQueue:
     
     def adding_quotes_into_queues(self, updt: str):
         # Assuming you have a method to generate unique order IDs
-        
-
-        # self.clear_bid()
-        # self.clear_ask()
         parsed_str_list = updt.split(';')
         print(f'{bcolors.OKGREEN} parsed_str_list: {parsed_str_list} {bcolors.ENDC}')
 
@@ -324,6 +314,24 @@ class BidAskQueue:
         ask_qty = data_dict.get('best_ask_qty', None)
         event_time = int(data_dict.get('event_time', '0'))
 
+        bid_price = data_dict.get('best_bid_price', None)
+        ask_price = data_dict.get('best_ask_price', None)
+
+        # Calculate the current price based on bid and ask prices
+        if bid_price is not None and ask_price is not None:
+            current_price = (float(bid_price) + float(ask_price)) / 2
+        elif bid_price is not None:
+            current_price = float(bid_price)
+        elif ask_price is not None:
+            current_price = float(ask_price)
+        else:
+            print(f'{bcolors.FAIL}No bid or ask price found for instrument {instrument}{bcolors.ENDC}')
+            return
+
+        # Update the current price for the instrument in the dictionary
+        self.current_prices[instrument] = current_price
+        print(f"{bcolors.OKGREEN}current_prices: {self.current_prices}{bcolors.ENDC}")
+        
         if bid_price is not None and bid_qty is not None:
             self.order_counter += 1  # Increment order_counter for a new order ID
             bid_order = Order(
@@ -376,6 +384,20 @@ class BidAskQueue:
                 break
         return res
 
+
+    def cancel_order(self, order_id):
+        for instrument, queue in self.bid_queue.items():
+            for order in queue:
+                if order.OrderID == order_id:
+                    queue.remove(order)
+                    return f"Order {order_id} canceled"
+        for instrument, queue in self.ask_queue.items():
+            for order in queue:
+                if order.OrderID == order_id:
+                    queue.remove(order)
+                    return f"Order {order_id} canceled"
+        return f"Order {order_id} not found"
+    
     def try_fill_3mins_order(self, filled_orders: List[Ack]) -> bool:
         res = False
         ms_unix_time_now = int(time.time() * 1000)
@@ -432,6 +454,13 @@ class TradeMatchingEngine:
                         ack_order_msg = Ack(order_from_client.SenderCompID, "3", order_from_client.OrderID, -1, order_from_client.Price)
                         data = ack_order_msg.to_string()  # Assuming to_string method to serialize your message
                         ack_publisher.send_string(data)
+                        
+                    elif msg_type == '1':  # Cancel order request
+                        order_id = update.split(';')[2]
+                        print(f"{bcolors.OKCYAN}is cancel order: {order_id} {bcolors.ENDC}")
+                        cancel_message = self.bid_ask.cancel_order(order_id)
+                        print(f"{bcolors.OKCYAN}{cancel_message}{bcolors.ENDC}")
+                        ack_publisher.send_string(f"cancel_order;{cancel_message}")
                         
                     elif msg_type == '2':  # Order book request
                         # finish

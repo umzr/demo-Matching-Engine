@@ -81,7 +81,7 @@ class TradingClient:
                 continue
 
             trading_pair = ''
-            if user_command in ['1', '2', '3', '4']:  # commands that require a trading pair
+            if user_command in ['1', '3', '4']:  # commands that require a trading pair
                 trading_pair = input("Enter trading pair (BTCUSDT or ETHUSDT): ").upper()
                 if trading_pair not in ["BTCUSDT", "ETHUSDT"]:
                     print("Invalid trading pair. Try again.")
@@ -93,7 +93,7 @@ class TradingClient:
                 commands[user_command][1](f"{trading_pair};{order_details}")
             elif user_command == '2':  # Cancel Order
                 order_id = input("Enter order ID to cancel: ")
-                commands[user_command][1](f"{trading_pair};{order_id}")
+                commands[user_command][1](f"{order_id}")
             elif user_command == '5':  # Search Order
                 order_id = self.sender_comp_id
                 commands[user_command][1](order_id)
