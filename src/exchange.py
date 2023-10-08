@@ -246,6 +246,8 @@ class BidAskQueue:
         print(f"{bcolors.WARNING}client_orders: {self.client_orders} {bcolors.ENDC}")
 
         client_orders_to_remove = []
+        executed_orders_info = []  # List to hold information about executed orders
+
         for client in self.client_orders:
             instrument = client.TradingPair  # Assuming 'TradingPair' attribute is the instrument in Order class
             if client.Side == "1":  # Buy Order
@@ -255,6 +257,7 @@ class BidAskQueue:
                     filled_orders.append(ack_message)
                     client_orders_to_remove.append(client)
                     res = True
+                    executed_orders_info.append(f"Buy Order Executed; Trigger Price: {client.Price}, Action Price: {self.current_prices[instrument]}, Instrument: {instrument}")
             elif client.Side == "2":  # Sell Order
                 if self.current_prices[instrument] >= client.Price:
                     print(f"Order filled at action price: {self.current_prices[instrument]}, user input price: {client.Price}, order: {client.to_string()}")
@@ -262,19 +265,24 @@ class BidAskQueue:
                     filled_orders.append(ack_message)
                     client_orders_to_remove.append(client)
                     res = True
+                    executed_orders_info.append(f"Sell Order Executed; Trigger Price: {client.Price}, Action Price: {self.current_prices[instrument]}, Instrument: {instrument}")
 
         # Remove fully filled client orders from self.client_orders
         for client in client_orders_to_remove:
             self.client_orders.remove(client)
 
+        executed_orders_str = '\n'.join(executed_orders_info)  # Convert executed orders info to string
         message = f"cur qty: {self.client_orders[0].OrderQty if self.client_orders else 'N/A'}, " + \
                 f"askQueueSize: {sum(len(q) for q in self.ask_queue.values())}, " + \
-                f"clientOrderSize: {len(self.client_orders)}"
+                f"clientOrderSize: {len(self.client_orders)}, " + \
+                f"Executed Orders:\n{executed_orders_str}"  # Add executed orders info to the message
+
         print(f"cur qty: {self.client_orders[0].OrderQty if self.client_orders else 'N/A'}",  # Logging current qty
             f"askQueueSize: {sum(len(q) for q in self.ask_queue.values())}",  # Total size of all ask queues
             f"clientOrderSize: {len(self.client_orders)}")  # Logging client order size
 
         return res, message
+
     
     def format_order_book(self, order_book):
         terminal_width, _ = shutil.get_terminal_size()
