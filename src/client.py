@@ -1,9 +1,14 @@
+import random
+import string
 import zmq
 import threading
 import json
 from typing import Dict
 
+
 class TradingClient:
+    order_id_counter = 0
+    
     def __init__(self):
         self.context = zmq.Context()
 
@@ -16,8 +21,17 @@ class TradingClient:
 
         self.user_input_thread = threading.Thread(target=self.handle_user_input)
         self.user_input_thread.start()
+        
+        self.sender_comp_id = self.generate_random_id()
 
+        self.trading_pair = ''
+        
         self.listen_for_acks()
+
+    @staticmethod
+    def generate_random_id(length=8):
+        # Generates a random string of uppercase letters and digits
+        return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
 
     def handle_user_input(self):
         commands = {
@@ -45,9 +59,10 @@ class TradingClient:
                 if trading_pair not in ["BTCUSDT", "ETHUSDT"]:
                     print("Invalid trading pair. Try again.")
                     continue
-
+                self.trading_pair = trading_pair
+                
             if user_command == '1':  # Place Order
-                order_details = input("Enter order details: ")
+                order_details = input("Enter order details (Price=1671;Qty=0.5;Side=Buy): ")
                 commands[user_command][1](f"{trading_pair};{order_details}")
             elif user_command == '2':  # Cancel Order
                 order_id = input("Enter order ID to cancel: ")
@@ -63,7 +78,7 @@ class TradingClient:
         """
         Format a message according to the specified rules.
         """
-        msg = f"35={msg_type};"
+        msg = f"{msg_type};"
         msg += ';'.join(f"{key}={value}" for key, value in fields.items())
         return msg
 
@@ -75,14 +90,47 @@ class TradingClient:
         fields = {segment.split('=')[0]: segment.split('=')[1] for segment in segments if '=' in segment}
         return fields
 
+
     def place_order(self, order_details):
         try:
-            fields = dict(item.split('=') for item in order_details.split(';') if '=' in item)
-            order_message = self.format_message("0", fields)  # Assuming msg_type "0" for new orders
+            # Splitting the user input into individual details
+            details = order_details.split(';')
+            
+            # Assuming order_details are given in the format: "Price=100;Qty=10;Side=Buy"
+            fields = {detail.split('=')[0]: detail.split('=')[1] for detail in details if '=' in detail}
+            order_id = TradingClient.order_id_counter
+            TradingClient.order_id_counter += 1
+            # Constructing the message string based on the given format
+            order_message = (
+                f"0;"
+                f"35=D;"  # Message type for new order
+                f"49={self.sender_comp_id};"   # Placeholder for sender comp ID, replace 'EXCHANGE' with actual value if necessary
+                f"37={order_id};"  # Placeholder for order ID, replace 'some_id' with actual value if necessary
+                f"38={fields['Qty']};"  # Quantity
+                f"40=2;"  # Order type, assuming '2' is the desired value
+                f"44={fields['Price']};"  # Price
+                f"52=-1;"  # Placeholder for sending time, replace with actual value if necessary
+                f"54={'1' if fields['Side'].lower() == 'buy' else '2'};"  # Side, assuming '1' for Buy and '2' for Sell
+                f"6404=0.0;"  # Placeholder for POV target percentage, replace with actual value if necessary
+                f"55={self.trading_pair}"  # Trading pair
+            )
+            
             print(f"Sending order: {order_message}")
+            self.trading_pair = '' # Resetting trading pair
+            
             self.order_publisher.send_string(order_message)
         except ValueError as e:
             print(f"Error: {e}. Please ensure that order details are formatted correctly.")
+
+
+    # def place_order(self, order_details):
+    #     try:
+    #         fields = dict(item.split('=') for item in order_details.split(';') if '=' in item)
+    #         order_message = self.format_message("0", fields)  # Assuming msg_type "0" for new orders
+    #         print(f"Sending order: {order_message}")
+    #         self.order_publisher.send_string(order_message)
+    #     except ValueError as e:
+    #         print(f"Error: {e}. Please ensure that order details are formatted correctly.")
 
 
 

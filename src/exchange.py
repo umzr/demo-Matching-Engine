@@ -22,7 +22,7 @@ class bcolors:
 
 class Order:
     def __init__(self, msg_type: str, order_id: str, order_qty: float, ord_type: str, price: float,
-                 sender_comp_id: str, sending_time: int, side: str, pov_target_percentage: float):
+                 sender_comp_id: str, sending_time: int, side: str, pov_target_percentage: float, trading_pair: str):
         self.MsgType = msg_type
         self.OrderID = order_id
         self.OrderQty = order_qty
@@ -32,20 +32,22 @@ class Order:
         self.SendingTime = sending_time
         self.Side = side
         self.POVTargetPercentage = pov_target_percentage
+        self.TradingPair = trading_pair  # Added TradingPair attribute
 
     @classmethod
     def from_string(cls, msg: str):
         segments = msg.split(';')
-        fields = {int(segment.split('=')[0]): segment.split('=')[1] for segment in segments}
+        fields = {segment.split('=')[0]: segment.split('=')[1] for segment in segments if '=' in segment}
         return cls(
-            fields[35], fields[37], float(fields[38]), fields[40], float(fields[44]), fields[49],
-            int(fields[52]), fields[54], float(fields[6404])
+            fields['35'], fields['37'], float(fields['38']), fields['40'], float(fields['44']), fields['49'],
+            int(fields['52']), fields['54'], float(fields['6404']), fields['55']  # Added trading_pair
         )
 
     def to_string(self) -> str:
         return f"35={self.MsgType};49={self.SenderCompID};37={self.OrderID};38={self.OrderQty};" \
                f"40={self.OrdType};44={self.Price};52={self.SendingTime};54={self.Side};" \
-               f"6404={self.POVTargetPercentage}"
+               f"6404={self.POVTargetPercentage};55={self.TradingPair}"  # Added trading_pair
+
     def to_dict(self):
         return {
             'MsgType': self.MsgType,
@@ -57,8 +59,8 @@ class Order:
             'SendingTime': self.SendingTime,
             'Side': self.Side,
             'POVTargetPercentage': self.POVTargetPercentage,
+            'TradingPair': self.TradingPair  # Added TradingPair
         }
-
 class Ack:
     def __init__(self, target_comp_id: str, msg_type: str, order_id: str, order_qty: float, price: float):
         self.TargetCompID = target_comp_id
@@ -259,6 +261,9 @@ class BidAskQueue:
         return '\n'.join(formatted_order_book)
     
     def adding_quotes_into_queues(self, updt: str):
+        # Assuming you have a method to generate unique order IDs
+        self.order_counter = 0  
+
         # self.clear_bid()
         # self.clear_ask()
         parsed_str_list = updt.split(';')
@@ -277,31 +282,35 @@ class BidAskQueue:
         ask_qty = data_dict.get('best_ask_qty', None)
 
         if bid_price is not None and bid_qty is not None:
-            bid_order = Order(  # Assume you have defined the Order class and this constructor call is valid
+            self.order_counter += 1  # Increment order_counter for a new order ID
+            bid_order = Order(
                 msg_type='D',
-                order_id='some_id',  # You'll need to generate or obtain an order ID
+                order_id=str(self.order_counter),  # Use order_counter as order ID
                 order_qty=float(bid_qty),
                 ord_type='2',
                 price=float(bid_price),
                 sender_comp_id='EXCHANGE',
                 sending_time=int(data_dict.get('transaction_time', 0)),
                 side='1',
-                pov_target_percentage=0.0
+                pov_target_percentage=0.0,
+                trading_pair=instrument  # Use instrument as trading_pair
             )
             self.insert_bid(instrument, bid_order)
             print(f"BID PARSER: {bid_order.to_string()}")
 
         if ask_price is not None and ask_qty is not None:
-            ask_order = Order(  # Assume you have defined the Order class and this constructor call is valid
+            self.order_counter += 1  # Increment order_counter for a new order ID
+            ask_order = Order(
                 msg_type='D',
-                order_id='some_id',  # You'll need to generate or obtain an order ID
+                order_id=str(self.order_counter),  # Use order_counter as order ID
                 order_qty=float(ask_qty),
                 ord_type='2',
                 price=float(ask_price),
                 sender_comp_id='EXCHANGE',
                 sending_time=int(data_dict.get('transaction_time', 0)),
                 side='2',
-                pov_target_percentage=0.0
+                pov_target_percentage=0.0,
+                trading_pair=instrument  # Use instrument as trading_pair
             )
             self.insert_ask(instrument, ask_order)
             print(f"ASK PARSER: {ask_order.to_string()}")
@@ -367,7 +376,7 @@ class TradeMatchingEngine:
                     update = order_subscriber.recv_string(flags=zmq.NOBLOCK)
                     # print(f"Received Client Msg: {update}")
                     msg_type = update.split(';')[0]  # Assuming the first field is always the message type
-         
+                    ack_publisher.send_string(update)
                     if msg_type == "0":  # order
                         print(f"{bcolors.OKCYAN}is order: {update} {bcolors.ENDC}")
                         order_from_client = Order.from_string(update)
@@ -377,6 +386,7 @@ class TradeMatchingEngine:
                         ack_order_msg = Ack(order_from_client.SenderCompID, "3", order_from_client.OrderID, -1, order_from_client.Price)
                         data = ack_order_msg.to_string()  # Assuming to_string method to serialize your message
                         ack_publisher.send_string(data)
+                        
                     elif msg_type == '2':  # Order book request
                         # finish
                         print("is order book request")
